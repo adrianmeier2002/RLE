@@ -2,8 +2,12 @@ import gymnasium as gym
 import numpy as np
 import time
 from datetime import datetime
-from torch.utils.tensorboard import SummaryWriter
 import imageio
+import ale_py
+import os
+
+from utils.env_utils import make_env
+from utils.logging_utils import create_writer, log_scalar, save_video
 
 def run_random_agent(
         episodes: int = 100,
@@ -11,10 +15,18 @@ def run_random_agent(
         video_every: int = None,
         seeds: int = None
 ):
-    env = gym.make("ALE/SpaceInvaders-v5", render_mode="rgb_array")
+    """
+    Runs a baseline random agent in the Atari environment for a specified number of episodes.
+    """
+
+    env = make_env(
+        record_video=bool(video_every),
+        video_folder="videos/baseline/",
+        video_freq=video_every
+    )
 
     run_name = f"baseline_random_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    writer = SummaryWriter(f"runs/{run_name}")
+    writer = create_writer("runs/baseline_random", run_name)
 
     rewards = []
 
@@ -40,12 +52,9 @@ def run_random_agent(
                 frames.append(frame)
 
         rewards.append(ep_reward)
-        writer.add_scalar("Reward/Episode", ep_reward, ep)
+        log_scalar(writer, "Reward/Episode", ep_reward, ep)
 
         print(f"Episode {ep + 1}/{episodes} - Reward: {ep_reward}")
-
-        if video_every and (ep % video_every == 0):
-            save_video(frames, f"videos/baseline/episode_{ep}.mp4")
 
     env.close()
 
@@ -60,8 +69,5 @@ def run_random_agent(
 
     return rewards
 
-def save_video(frames, path, fps=30):
-    imageio.mimsave(path, frames, fps=fps)
-
 if __name__ == "__main__":
-    run_random_agent(episodes=100, render=False, video_every=20, seeds=42)
+    run_random_agent(episodes=1000, render=False, video_every=100, seeds=42)
