@@ -7,11 +7,10 @@ import ale_py
 import os
 
 from utils.env_utils import make_env
-from utils.logging_utils import create_writer, log_scalar, save_video
+from utils.logging_utils import create_writer, log_scalar
 
 def run_random_agent(
         episodes: int = 100,
-        render: bool = False,
         video_every: int = None,
         seeds: int = None
 ):
@@ -40,16 +39,10 @@ def run_random_agent(
         truncated = False           # Trunication means episode ended due to time limit
         ep_reward = 0               # Initialize episode reward
 
-        frames = []          # For storing frames if rendering
-
         while not (done or truncated):
             action = env.action_space.sample()  # Sample random action
             next_obs, reward, done, truncated, info = env.step(action)  # Take action in the environment
             ep_reward += reward  # Accumulate reward
-
-            if video_every and (ep % video_every == 0):
-                frame = env.render()
-                frames.append(frame)
 
         rewards.append(ep_reward)
         log_scalar(writer, "Reward/Episode", ep_reward, ep)

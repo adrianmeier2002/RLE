@@ -2,8 +2,7 @@ import os
 import numpy as np
 from datetime import datetime
 import imageio
-from utils.env_utils import make_eval_env
-from utils.logging_utils import save_video
+from utils.env_utils import make_env
 
 def evaluate_agent(
         agent,
@@ -16,7 +15,7 @@ def evaluate_agent(
 ):
     """Evaluate a given agent in the Atari environment over a number of episodes and saves the metrics and optional videos."""
 
-    env = make_eval_env()
+    env = make_env(eval_mode=True)
     rewards = []
 
     for ep in range(episodes):
@@ -28,7 +27,6 @@ def evaluate_agent(
         done = False
         truncated = False
         ep_reward = 0
-        frames = []
 
         while not (done or truncated):
             action = agent.select_action(obs)
@@ -38,14 +36,7 @@ def evaluate_agent(
             if render:
                 env.render()
 
-            if record_video and (ep % video_every == 0):
-                frame = env.render(mode='rgb_array')
-                frames.append(frame)
-
         rewards.append(ep_reward)
-
-        if record_video and (ep % video_every == 0):
-            save_video(frames, os.path.join(video_folder, f"eval_ep{ep+1}.mp4"))
 
         print(f"Episode {ep+1}/{episodes} - Reward: {ep_reward}")
 
