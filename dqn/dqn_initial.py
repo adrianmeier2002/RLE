@@ -16,6 +16,8 @@ from utils.logging_utils import create_writer, log_scalar
 class QNetwork(nn.Module):
     def __init__(self, input_shape, num_actions):
         super(QNetwork, self).__init__()
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         c, h, w = input_shape
         self.conv = nn.Sequential(
@@ -34,7 +36,7 @@ class QNetwork(nn.Module):
         )
     
     def _get_conv_out(self, shape):
-        o = self.conv(torch.zeros(1, *shape))
+        o = self.conv(torch.zeros(1, *shape)).to(self.device)
         return int(np.prod(o.size()[1:]))
     
     def forward(self, x):
@@ -98,8 +100,11 @@ class DQNAgent:
         self.target_net.load_state_dict(self.q_net.state_dict())
 
 def train_dqn(env_id="ALE/SpaceInvaders-v5", 
-              agent=DQNAgent, num_episodes=1000, 
-              batch_size=32, target_update_freq=1000, 
+              agent=DQNAgent, 
+              buffer_class=ReplayBuffer,
+              num_episodes=1000, 
+              batch_size=32, 
+              target_update_freq=1000, 
               video_every=None, 
               video_folder = "videos/dqn_initial/",
               writer_path = "runs/dqn_initial",
@@ -136,7 +141,7 @@ def train_dqn(env_id="ALE/SpaceInvaders-v5",
     agent = agent(input_shape, num_actions)
     agent.q_net.to(device)
     agent.target_net.to(device)
-    replay_buffer = ReplayBuffer(capacity=100000, state_shape=input_shape)
+    replay_buffer = buffer_class(capacity=100000, state_shape=input_shape)
 
     writer = create_writer(writer_path, f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
     rewards_history = []
@@ -162,7 +167,11 @@ def train_dqn(env_id="ALE/SpaceInvaders-v5",
             if len(replay_buffer) >= batch_size:
                 for _ in range(4):  # Perform multiple updates per step
                     batch = replay_buffer.sample(batch_size)
-                    loss = agent.update(batch)
+                    if buffer_class.__name__ == "ReplayBuffer":
+                        loss = agent.update(batch)
+                    else:
+                        loss, td_errors = agent.update(batch)
+                        replay_buffer.update_priorities(batch[-2], td_errors)
                     log_scalar(writer, "loss", loss, global_step)
 
         rewards_history.append(ep_reward)
@@ -182,6 +191,7 @@ if __name__ == "__main__":
     agent, rewards_history = train_dqn(
         env_id="ALE/SpaceInvaders-v5",
         agent=DQNAgent,
+        buffer_class=ReplayBuffer,
         num_episodes=1000,
         batch_size=128,
         target_update_freq=1000,

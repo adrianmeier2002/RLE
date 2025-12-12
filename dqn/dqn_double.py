@@ -1,7 +1,8 @@
 import torch
 import torch.nn.functional as F
 
-from .dqn_initial import DQNAgent, train_dqn
+from dqn.dqn_initial import DQNAgent, train_dqn
+from utils.replay_buffer import ReplayBuffer
 
 class DoubleDQNAgent(DQNAgent):
     # Inherits everything from DQNAgent except the update method
@@ -33,6 +34,7 @@ if __name__ == "__main__":
     agent, rewards_history = train_dqn(
         env_id="ALE/SpaceInvaders-v5",
         agent=DoubleDQNAgent,
+        buffer_class=ReplayBuffer,
         num_episodes=1000,
         batch_size=128,
         target_update_freq=1000,
