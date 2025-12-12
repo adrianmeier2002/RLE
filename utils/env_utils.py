@@ -10,7 +10,8 @@ def make_env(
         record_video: bool = False, 
         video_folder: str = "videos/", 
         video_freq: int = 100,
-        frame_size: int = 84
+        frame_size: int = 84,
+        frameskip: int = 4
 ):
     """
     Creates a basic Atari environment without any wrappers.
@@ -32,7 +33,7 @@ def make_env(
     # Create base environment
     env = gym.make(
         env_id,
-        frameskip=4,               # Built-in frameskipping
+        frameskip=frameskip,               # Built-in frameskipping
         repeat_action_probability=0, # No sticky actions
         render_mode=render_mode
     )

@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 
 class ReplayBuffer:
     """"
@@ -7,19 +8,23 @@ class ReplayBuffer:
     (state, action, reward, next_state, done)
     """
 
-    def __init__(self, capacity: int, state_shape: tuple, dtype=np.uint8):
+    def __init__(self, capacity: int, state_shape: tuple, dtype=torch.uint8):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.capacity = capacity
         self.ptr = 0           # Pointer to the current index
         self.size = 0          # Current size of the buffer
 
-        self.states = np.zeros((capacity, *state_shape), dtype=dtype)
-        self.next_states = np.zeros((capacity, *state_shape), dtype=dtype)
-        self.actions = np.zeros((capacity,), dtype=np.int32)
-        self.rewards = np.zeros((capacity,), dtype=np.float32)
-        self.dones = np.zeros((capacity,), dtype=np.bool_)
+        self.states = torch.zeros((capacity, *state_shape), dtype=dtype).to(self.device)
+        self.next_states = torch.zeros((capacity, *state_shape), dtype=dtype).to(self.device)
+        self.actions = torch.zeros((capacity,), dtype=torch.int64).to(self.device)
+        self.rewards = torch.zeros((capacity,), dtype=torch.float32).to(self.device)
+        self.dones = torch.zeros((capacity,), dtype=torch.bool).to(self.device)
 
     def add(self, state, action, reward, next_state, done):
         """Adds a new transition to the replay buffer."""
+        state = torch.tensor(state, dtype=self.states.dtype, device=self.device)
+        next_state = torch.tensor(next_state, dtype=self.next_states.dtype, device=self.device)
+
         self.states[self.ptr] = state
         self.next_states[self.ptr] = next_state
         self.actions[self.ptr] = action

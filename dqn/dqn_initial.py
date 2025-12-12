@@ -44,15 +44,15 @@ class QNetwork(nn.Module):
         return self.fc(conv_out)
     
 class DQNAgent:
-    def __init__(self, input_shape, num_actions, device='cpu', lr=1e-4, gamma=0.99, epsilon_start=1.0, 
+    def __init__(self, input_shape, num_actions, lr=1e-4, gamma=0.99, epsilon_start=1.0, 
                  epsilon_final=0.01, epsilon_decay=50000):
-        self.device = device
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self.num_actions = num_actions
         self.gamma = gamma
 
-        self.q_net = QNetwork(input_shape, num_actions)
-        self.target_net = QNetwork(input_shape, num_actions)
+        self.q_net = QNetwork(input_shape, num_actions).to(self.device)
+        self.target_net = QNetwork(input_shape, num_actions).to(self.device)
         self.target_net.load_state_dict(self.q_net.state_dict())
 
         self.optimizer = optim.Adam(self.q_net.parameters(), lr=lr)
@@ -80,7 +80,10 @@ class DQNAgent:
         actions = torch.tensor(actions, dtype=torch.int64).unsqueeze(1).to(self.device)
         rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(self.device)
         dones = torch.tensor(dones, dtype=torch.float32).unsqueeze(1).to(self.device)
+        
+        # Q(s,a)
         q_values = self.q_net(states).gather(1, actions)                     # Q(s,a)
+        
         with torch.no_grad():
             next_q_values = self.target_net(next_states).max(1)[0].unsqueeze(1)  # max_a' Q(s',a')
             target = rewards + self.gamma * next_q_values * (1 - dones)  # target Q-value
@@ -94,8 +97,20 @@ class DQNAgent:
     def update_target(self):
         self.target_net.load_state_dict(self.q_net.state_dict())
 
-def train_dqn(env_id="ALE/SpaceInvaders-v5", num_episodes=1000, batch_size=32, target_update_freq=1000, video_every=None):
+def train_dqn(env_id="ALE/SpaceInvaders-v5", 
+              agent=DQNAgent, num_episodes=1000, 
+              batch_size=32, target_update_freq=1000, 
+              video_every=None, 
+              video_folder = "videos/dqn_initial/",
+              writer_path = "runs/dqn_initial",
+              model_save = "dqn/models/dqn_initial.pt"
+):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if device.type == 'cuda':
+        print(f"Using GPU: {torch.cuda.get_device_name(0)}")
+
+    else:
+        print("Using CPU")
 
     def preprocess_obs(obs):
         obs = np.array(obs, copy=False)
@@ -110,7 +125,7 @@ def train_dqn(env_id="ALE/SpaceInvaders-v5", num_episodes=1000, batch_size=32, t
     env = make_env(
         env_id=env_id,
         record_video=bool(video_every),
-        video_folder="videos/dqn_initial/",
+        video_folder=video_folder,
         video_freq=video_every
     )
     obs, info = env.reset()
@@ -118,12 +133,12 @@ def train_dqn(env_id="ALE/SpaceInvaders-v5", num_episodes=1000, batch_size=32, t
     input_shape = obs.shape
     num_actions = env.action_space.n
 
-    agent = DQNAgent(input_shape, num_actions)
+    agent = agent(input_shape, num_actions)
     agent.q_net.to(device)
     agent.target_net.to(device)
     replay_buffer = ReplayBuffer(capacity=100000, state_shape=input_shape)
 
-    writer = create_writer("runs/dqn_initial", f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+    writer = create_writer(writer_path, f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
     rewards_history = []
     global_step = 0
 
@@ -145,9 +160,10 @@ def train_dqn(env_id="ALE/SpaceInvaders-v5", num_episodes=1000, batch_size=32, t
             global_step += 1
 
             if len(replay_buffer) >= batch_size:
-                batch = replay_buffer.sample(batch_size)
-                loss = agent.update(batch)
-                log_scalar(writer, "loss", loss, global_step)
+                for _ in range(4):  # Perform multiple updates per step
+                    batch = replay_buffer.sample(batch_size)
+                    loss = agent.update(batch)
+                    log_scalar(writer, "loss", loss, global_step)
 
         rewards_history.append(ep_reward)
         log_scalar(writer, "Reward/Episode", ep_reward, ep)
@@ -158,15 +174,16 @@ def train_dqn(env_id="ALE/SpaceInvaders-v5", num_episodes=1000, batch_size=32, t
         print(f"Episode {ep + 1}/{num_episodes} - Reward: {ep_reward}")
         
     env.close()
-    torch.save(agent.q_net.state_dict(), "dqn/models/dqn_initial.pt")
+    torch.save(agent.q_net.state_dict(), model_save)
     return agent, rewards_history
 
 
 if __name__ == "__main__":
     agent, rewards_history = train_dqn(
         env_id="ALE/SpaceInvaders-v5",
+        agent=DQNAgent,
         num_episodes=1000,
-        batch_size=32,
+        batch_size=128,
         target_update_freq=1000,
         video_every=100
     )
