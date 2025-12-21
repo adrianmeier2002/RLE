@@ -7,12 +7,22 @@ class PerDQNAgent(DQNAgent):
     def update(self, batch):
         states, actions, rewards, next_states, dones, idx, weights = batch
 
-        states = states.float().to(self.device)
-        next_states = next_states.float().to(self.device)
-        actions = actions.long().unsqueeze(1).to(self.device)
-        rewards = rewards.float().unsqueeze(1).to(self.device)
-        dones = dones.float().unsqueeze(1).to(self.device)
-        weights = weights.float().to(self.device)
+        if not isinstance(states, torch.Tensor):
+            states = torch.tensor(states, dtype=torch.float32).to(self.device)
+            next_states = torch.tensor(next_states, dtype=torch.float32).to(self.device)
+            actions = torch.tensor(actions, dtype=torch.int64).unsqueeze(1).to(self.device)
+            rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(self.device)
+            dones = torch.tensor(dones, dtype=torch.float32).unsqueeze(1).to(self.device)
+            weights = torch.tensor(weights, dtype=torch.float32).unsqueeze(1).to(self.device)
+
+        else:
+            actions = actions.unsqueeze(1) if actions.dim() == 1 else actions
+            rewards = rewards.unsqueeze(1) if rewards.dim() == 1 else rewards
+            dones = dones.float()
+            dones = dones.unsqueeze(1) if dones.dim() == 1 else dones
+            weights = weights.float()
+            weights = weights.unsqueeze(1) if weights.dim() == 1 else weights
+
 
         # Q(s,a)
         q_values = self.q_net(states).gather(1, actions)
@@ -39,9 +49,11 @@ if __name__ == "__main__":
         env_id="ALE/SpaceInvaders-v5",
         agent=PerDQNAgent,
         buffer_class=PrioritizedReplayBuffer,
-        num_episodes=1000,
-        batch_size=128,
-        target_update_freq=1000,
+        num_steps=5000000,
+        batch_size=32,
+        target_update_freq=10000,
+        learning_starts=50000,
+        train_freq=4,
         video_every=100,
 
         video_folder="videos/dqn_per/",

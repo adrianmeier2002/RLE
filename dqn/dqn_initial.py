@@ -36,8 +36,8 @@ class QNetwork(nn.Module):
         )
     
     def _get_conv_out(self, shape):
-        o = self.conv(torch.zeros(1, *shape)).to(self.device)
-        return int(np.prod(o.size()[1:]))
+        o = self.conv(torch.zeros(1, *shape))
+        return int(np.prod(o.size()))
     
     def forward(self, x):
         x = x.float() / 255.0  # Normalize pixel values
@@ -47,7 +47,7 @@ class QNetwork(nn.Module):
     
 class DQNAgent:
     def __init__(self, input_shape, num_actions, lr=1e-4, gamma=0.99, epsilon_start=1.0, 
-                 epsilon_final=0.01, epsilon_decay=50000):
+                 epsilon_final=0.01, epsilon_decay=1000000):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self.num_actions = num_actions
@@ -67,21 +67,32 @@ class DQNAgent:
     def select_action(self, state):
         self.step_count += 1
         eps = self.epsilon_final + (self.epsilon - self.epsilon_final) * \
-              np.exp(-1. * self.step_count / self.epsilon_decay)            # calculate epsilon
+            np.exp(-1. * self.step_count / self.epsilon_decay)  
+       
+
         if random.random() < eps:                                           # explore a random action if less than epsilon
             return random.randrange(self.num_actions)
         else:                                                               # exploit the best action
-            state_tensor = torch.tensor(np.array([state]), dtype=torch.float32).to(self.device)
-            q_values = self.q_net(state_tensor)
-            return int(torch.argmax(q_values, dim=1)[0])                    # return the action with highest Q-value
+            with torch.no_grad():
+                state_tensor = torch.tensor(np.array([state]), dtype=torch.float32).to(self.device)
+                q_values = self.q_net(state_tensor)
+                return int(torch.argmax(q_values, dim=1)[0])                    # return the action with highest Q-value
         
     def update(self, batch):
         states, actions, rewards, next_states, dones = batch
-        states = torch.tensor(states, dtype=torch.float32).to(self.device)
-        next_states = torch.tensor(next_states, dtype=torch.float32).to(self.device)
-        actions = torch.tensor(actions, dtype=torch.int64).unsqueeze(1).to(self.device)
-        rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(self.device)
-        dones = torch.tensor(dones, dtype=torch.float32).unsqueeze(1).to(self.device)
+
+        if not isinstance(states, torch.Tensor):
+            states = torch.tensor(states, dtype=torch.float32).to(self.device)
+            next_states = torch.tensor(next_states, dtype=torch.float32).to(self.device)
+            actions = torch.tensor(actions, dtype=torch.int64).unsqueeze(1).to(self.device)
+            rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(self.device)
+            dones = torch.tensor(dones, dtype=torch.float32).unsqueeze(1).to(self.device)
+
+        else:
+            actions = actions.unsqueeze(1) if actions.dim() == 1 else actions
+            rewards = rewards.unsqueeze(1) if rewards.dim() == 1 else rewards
+            dones = dones.float()
+            dones = dones.unsqueeze(1) if dones.dim() == 1 else dones
         
         # Q(s,a)
         q_values = self.q_net(states).gather(1, actions)                     # Q(s,a)
@@ -93,6 +104,10 @@ class DQNAgent:
         loss = F.mse_loss(q_values, target)                                 # MSE loss
         self.optimizer.zero_grad()
         loss.backward()
+
+        # Gradient clipping for stability
+        torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), max_norm=10.0)
+
         self.optimizer.step()
         return loss.item()
     
@@ -102,9 +117,11 @@ class DQNAgent:
 def train_dqn(env_id="ALE/SpaceInvaders-v5", 
               agent=DQNAgent, 
               buffer_class=ReplayBuffer,
-              num_episodes=1000, 
+              num_steps=1000000, 
               batch_size=32, 
-              target_update_freq=1000, 
+              target_update_freq=10000,
+              learning_starts=50000,
+              train_freq=4,
               video_every=None, 
               video_folder = "videos/dqn_initial/",
               writer_path = "runs/dqn_initial",
@@ -117,72 +134,81 @@ def train_dqn(env_id="ALE/SpaceInvaders-v5",
     else:
         print("Using CPU")
 
-    def preprocess_obs(obs):
-        obs = np.array(obs, copy=False)
-        if obs.ndim == 2:
-            obs = obs[None, :, :]
-        elif obs.ndim == 3:
-            obs = np.transpose(obs, (2, 0, 1))
-        else:
-            raise ValueError(f"Unexpected observation shape: {obs.shape}")
-        return obs
-
     env = make_env(
         env_id=env_id,
         record_video=bool(video_every),
         video_folder=video_folder,
-        video_freq=video_every
+        video_freq=video_every,
+        num_stack=4
     )
     obs, info = env.reset()
-    obs = preprocess_obs(obs)
     input_shape = obs.shape
     num_actions = env.action_space.n
 
+    print(f"Input shape: {input_shape}")
+    print(f"Number of actions: {num_actions}")
+
     agent = agent(input_shape, num_actions)
-    agent.q_net.to(device)
-    agent.target_net.to(device)
     replay_buffer = buffer_class(capacity=100000, state_shape=input_shape)
 
     writer = create_writer(writer_path, f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+    
     rewards_history = []
+    recent_rewards = deque(maxlen=100)
     global_step = 0
+    num_episode = 0
 
-    for ep in range(num_episodes):
-        obs, info = env.reset()
-        obs = preprocess_obs(obs)
-        done = False
-        truncated = False
-        ep_reward = 0
+    obs, info = env.reset()
+    ep_reward = 0
 
-        while not (done or truncated):
-            action = agent.select_action(obs)
-            next_obs, reward, done, truncated, info = env.step(action)
-            next_obs = preprocess_obs(next_obs)
-            replay_buffer.add(obs, action, reward, next_obs, done)
-            ep_reward += reward
-            obs = next_obs
+    while global_step < num_steps:
+        action = agent.select_action(obs)
+        next_obs, reward, done, truncated, info = env.step(action)
 
-            global_step += 1
+        # Store transition
+        replay_buffer.add(obs, action, reward, next_obs, done or truncated)
+        ep_reward += reward
+        obs = next_obs
 
+        global_step += 1
+
+        # Training step
+        if global_step >= learning_starts and global_step % train_freq == 0:
             if len(replay_buffer) >= batch_size:
-                for _ in range(4):  # Perform multiple updates per step
-                    batch = replay_buffer.sample(batch_size)
-                    if buffer_class.__name__ == "ReplayBuffer":
-                        loss = agent.update(batch)
-                    else:
-                        loss, td_errors = agent.update(batch)
-                        replay_buffer.update_priorities(batch[-2], td_errors)
-                    log_scalar(writer, "loss", loss, global_step)
+                batch = replay_buffer.sample(batch_size)
+                loss = agent.update(batch)
 
-        rewards_history.append(ep_reward)
-        log_scalar(writer, "Reward/Episode", ep_reward, ep)
+                if global_step % 1000 == 0:
+                    log_scalar(writer, "train/loss", loss, global_step)
 
+        
+        # Update target network
         if global_step % target_update_freq == 0:
             agent.update_target()
+            print(f"Updated target network at step {global_step}")
 
-        print(f"Episode {ep + 1}/{num_episodes} - Reward: {ep_reward}")
-        
+        # End of episode
+        if done or truncated:
+            rewards_history.append(ep_reward)
+            recent_rewards.append(ep_reward)
+            num_episode += 1
+
+            # Logging
+            log_scalar(writer, "train/episode_reward", ep_reward, num_episode)
+            log_scalar(writer, "train/epsilon", agent.epsilon_final + (agent.epsilon - agent.epsilon_final)
+                          * np.exp(-1. * agent.step_count / agent.epsilon_decay), global_step)
+            
+            # Print progress
+            if num_episode % 10 == 0:
+                avg_reward = np.mean(recent_rewards) if recent_rewards else 0
+                print(f"Episode {num_episode} - Step {global_step}/{num_steps} - Reward: {ep_reward:.1f} - Avg(100) {avg_reward:.1f}")
+
+            obs, info = env.reset()
+            ep_reward = 0
+
+    # Save final model        
     env.close()
+    os.makedirs(os.path.dirname(model_save), exist_ok=True)
     torch.save(agent.q_net.state_dict(), model_save)
     return agent, rewards_history
 
@@ -192,8 +218,10 @@ if __name__ == "__main__":
         env_id="ALE/SpaceInvaders-v5",
         agent=DQNAgent,
         buffer_class=ReplayBuffer,
-        num_episodes=1000,
-        batch_size=128,
-        target_update_freq=1000,
+        num_steps=20000000,
+        batch_size=32,
+        target_update_freq=10000,
+        learning_starts=50000,
+        train_freq=4,
         video_every=100
     )
