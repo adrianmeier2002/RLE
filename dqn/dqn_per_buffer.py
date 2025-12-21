@@ -1,9 +1,15 @@
 import torch
+import torch.nn.functional as F
 
 from utils.replay_buffer_per import PrioritizedReplayBuffer
 from dqn.dqn_initial import DQNAgent, train_dqn
 
 class PerDQNAgent(DQNAgent):
+    """
+    DQN Agent with Prioritized Experience Replay (PER)
+    Samples experiences based on their TD error magnitude.
+    """
+
     def update(self, batch):
         states, actions, rewards, next_states, dones, idx, weights = batch
 
@@ -21,7 +27,6 @@ class PerDQNAgent(DQNAgent):
             dones = dones.float()
             dones = dones.unsqueeze(1) if dones.dim() == 1 else dones
             weights = weights.float()
-            weights = weights.unsqueeze(1) if weights.dim() == 1 else weights
 
 
         # Q(s,a)
@@ -31,18 +36,19 @@ class PerDQNAgent(DQNAgent):
             next_q_values = self.target_net(next_states).max(dim=1)[0].unsqueeze(1)  # max_a' Q(s',a')
             target = rewards + self.gamma * next_q_values * (1 - dones)  # target Q-value
 
-        td_errors = target - q_values
-        abs_td = td_errors.abs().detach()
+        td_errors = (target - q_values).abs().detach()
 
-        # Weighted MSE loss with PER
-        loss = (weights * (td_errors ** 2)).mean()
+        # Weighted Huber loss with PER
+        elementwise_loss = F.smooth_l1_loss(q_values, target, reduction='none')
+        loss = (weights * elementwise_loss).mean()
 
         self.optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), 1.0)
         self.optimizer.step()
 
         # Return TD errors for updating priorities
-        return loss.item(), abs_td
+        return loss.item(), td_errors
     
 if __name__ == "__main__":
     agent, rewards_history = train_dqn(

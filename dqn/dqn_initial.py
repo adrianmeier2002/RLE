@@ -101,7 +101,7 @@ class DQNAgent:
             next_q_values = self.target_net(next_states).max(1)[0].unsqueeze(1)  # max_a' Q(s',a')
             target = rewards + self.gamma * next_q_values * (1 - dones)  # target Q-value
 
-        loss = F.mse_loss(q_values, target)                                 # MSE loss
+        loss = F.smooth_l1_loss(q_values, target)                                 # Huber loss
         self.optimizer.zero_grad()
         loss.backward()
 
@@ -195,8 +195,11 @@ def train_dqn(env_id="ALE/SpaceInvaders-v5",
 
             # Logging
             log_scalar(writer, "train/episode_reward", ep_reward, num_episode)
-            log_scalar(writer, "train/epsilon", agent.epsilon_final + (agent.epsilon - agent.epsilon_final)
-                          * np.exp(-1. * agent.step_count / agent.epsilon_decay), global_step)
+
+            if hasattr(agent, 'epsilon') and hasattr(agent, 'epsilon_final'):
+                epsilon = agent.epsilon_final + (agent.epsilon - agent.epsilon_final) * \
+                         np.exp(-1. * agent.step_count / agent.epsilon_decay)
+                log_scalar(writer, "train/epsilon", epsilon, global_step)
             
             # Print progress
             if num_episode % 10 == 0:
@@ -218,7 +221,7 @@ if __name__ == "__main__":
         env_id="ALE/SpaceInvaders-v5",
         agent=DQNAgent,
         buffer_class=ReplayBuffer,
-        num_steps=20000000,
+        num_steps=5000000,
         batch_size=32,
         target_update_freq=10000,
         learning_starts=50000,

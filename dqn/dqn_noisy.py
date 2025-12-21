@@ -68,7 +68,7 @@ class NoisyQNetwork(nn.Module):
 
     def _get_conv_out(self, shape):
         o = self.conv(torch.zeros(1, *shape))
-        return int(np.prod(o.size()[1:]))
+        return int(np.prod(o.size()))
 
     def forward(self, x):
         x = x.float() / 255.0
@@ -82,7 +82,6 @@ class NoisyQNetwork(nn.Module):
     
 class NoisyDQNAgent:
     def __init__(self, input_shape, num_actions, lr=1e-4, gamma=0.99):
-        super().__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self.num_actions = num_actions
@@ -95,27 +94,38 @@ class NoisyDQNAgent:
         self.optimizer = optim.Adam(self.q_net.parameters(), lr=lr)
     
     def select_action(self, state):
-        state_tensor = torch.tensor(np.array([state]), dtype=torch.float32).to(self.device)
-        q_values = self.q_net(state_tensor)
-        return int(torch.argmax(q_values, dim=1)[0])
+        with torch.no_grad():
+            state_tensor = torch.tensor(np.array([state]), dtype=torch.float32).to(self.device)
+            q_values = self.q_net(state_tensor)
+            return int(torch.argmax(q_values, dim=1)[0])
 
     def update(self, batch):
         states, actions, rewards, next_states, dones = batch
-        states = torch.tensor(states, dtype=torch.float32).to(self.device)
-        next_states = torch.tensor(next_states, dtype=torch.float32).to(self.device)
-        actions = torch.tensor(actions, dtype=torch.int64).unsqueeze(1).to(self.device)
-        rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(self.device)
-        dones = torch.tensor(dones, dtype=torch.float32).unsqueeze(1).to(self.device)
+        
+        # Convert to tensors if not already
+        if not isinstance(states, torch.Tensor):
+            states = torch.tensor(states, dtype=torch.float32).to(self.device)
+            next_states = torch.tensor(next_states, dtype=torch.float32).to(self.device)
+            actions = torch.tensor(actions, dtype=torch.int64).unsqueeze(1).to(self.device)
+            rewards = torch.tensor(rewards, dtype=torch.float32).unsqueeze(1).to(self.device)
+            dones = torch.tensor(dones, dtype=torch.float32).unsqueeze(1).to(self.device)
+        else:
+            actions = actions.unsqueeze(1) if actions.dim() == 1 else actions
+            rewards = rewards.unsqueeze(1) if rewards.dim() == 1 else rewards
+            dones = dones.float()
+            dones = dones.unsqueeze(1) if dones.dim() == 1 else dones
 
+        # Q(s,a)
         q_values = self.q_net(states).gather(1, actions)
 
         with torch.no_grad():
             next_q_values = self.target_net(next_states).max(1)[0].unsqueeze(1)
             target = rewards + self.gamma * next_q_values * (1 - dones)
 
-        loss = F.mse_loss(q_values, target)
+        loss = F.smooth_l1_loss(q_values, target)
         self.optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), 1.0)
         self.optimizer.step()
 
         self.q_net.reset_noise()

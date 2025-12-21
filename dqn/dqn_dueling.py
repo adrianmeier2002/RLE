@@ -11,8 +11,6 @@ class DuelingQNetwork(nn.Module):
     def __init__(self, input_shape, num_actions):
         super(DuelingQNetwork, self).__init__()
 
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
         c, h, w = input_shape
 
         self.conv = nn.Sequential(
@@ -41,8 +39,8 @@ class DuelingQNetwork(nn.Module):
         )
 
     def _get_conv_out(self, shape):
-        x = self.conv(torch.zeros(1, *shape)).to(self.device)
-        return int(np.prod(x.size()[1:]))
+        x = self.conv(torch.zeros(1, *shape))
+        return int(np.prod(x.size()))
     
     def forward(self, x):
         x = x.float() / 255.0

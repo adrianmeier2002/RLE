@@ -6,6 +6,18 @@ class PrioritizedReplayBuffer:
     Proportional Prioritized Experience Replay (PER) Buffer.
 
     Reuse a lot of the structure from the simple ReplayBuffer, but add priority sampling.
+
+    Parameters:
+    capacity : int
+        Maximum size of the buffer.
+    state_shape : tuple
+        Shape of state observations.
+    alpha : float
+        How much prioritization to use (0 = uniform, 1 = full prioritization).
+    beta : float
+        Initial importance sampling weight (annealing to 1 over time).
+    beta_increment : float
+        Amount to increment beta per sample.
     """
 
     def __init__(self, capacity: int, 
@@ -30,10 +42,10 @@ class PrioritizedReplayBuffer:
         self.alpha = alpha
         self.beta = beta
         self.beta_increment = beta_increment
+        self.epsilon = 1e-6
 
         # Priorities
         self.priorities = np.zeros((capacity,), dtype=np.float32)
-        self.epsilon = 1e-6 # Small constant to avoid zero prioritys
 
     def add(self, state, action, reward, next_state, done):
         """Adds a new transition to the replay buffer."""
@@ -47,7 +59,7 @@ class PrioritizedReplayBuffer:
         self.dones[self.ptr] = done
 
         # Highest priority -> new samples will be sampled first
-        max_prio = self.priorities.max() if self.size > 0 else 1.0
+        max_prio = self.priorities[:self.size].max() if self.size > 0 else 1.0
         self.priorities[self.ptr] = max_prio
 
         # Move pointer
@@ -56,23 +68,22 @@ class PrioritizedReplayBuffer:
 
     def sample(self, batch_size: int):
         """Proportional sampling based on priorities."""
-        if self.size == self.capacity:
-            prios = self.priorities
-        else:
-            prios = self.priorities[:self.size]
+        prios = self.priorities[:self.size]
 
         # Convert priorities to probabilities
         probs = prios ** self.alpha
         probs /= probs.sum()
 
         # Sample indices
-        idx = np.random.choice(self.size, batch_size, p=probs)
+        idx = np.random.choice(self.size, batch_size, p=probs, replace=False)
 
         # Importance sampling weights
         self.beta = min(1.0, self.beta + self.beta_increment)
         weights = (self.size * probs[idx]) ** (-self.beta)
-        weights /= weights.max()  # Normalize
-        weights = torch.tensor(weights, dtype=torch.float32, device=self.device).unsqueeze(1)
+        weights /= weights.max()  # Normalize for stability
+
+        # Convert to tensors
+        weights = torch.tensor(weights, dtype=torch.float32, device=self.device)
 
         return (
             self.states[idx],
@@ -86,7 +97,10 @@ class PrioritizedReplayBuffer:
     
     def update_priorities(self, idx, td_errors):
         """Update priorities using TD-error."""
-        td_errors = td_errors.detach().cpu().numpy().reshape(-1)
+        if isinstance(td_errors, torch.Tensor):
+            td_errors = td_errors.detach().cpu().numpy()
+        td_errors = td_errors.flatten()
+        
         self.priorities[idx] = np.abs(td_errors) + self.epsilon
 
     def __len__(self):
