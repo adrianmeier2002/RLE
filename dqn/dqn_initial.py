@@ -47,7 +47,7 @@ class QNetwork(nn.Module):
     
 class DQNAgent:
     def __init__(self, input_shape, num_actions, lr=1e-4, gamma=0.99, epsilon_start=1.0, 
-                 epsilon_final=0.01, epsilon_decay=1000000):
+                 epsilon_final=0.01, epsilon_decay=1000000, eval_mode=False):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self.num_actions = num_actions
@@ -63,10 +63,18 @@ class DQNAgent:
         self.epsilon_final = epsilon_final
         self.epsilon_decay = epsilon_decay
         self.step_count = 0
+        self.eval_mode = eval_mode
 
     def select_action(self, state):
-        self.step_count += 1
-        eps = self.epsilon_final + (self.epsilon - self.epsilon_final) * \
+
+        if not self.eval_mode:
+            self.step_count += 1
+
+        if self.eval_mode:
+            eps = 0
+        
+        else:
+            eps = self.epsilon_final + (self.epsilon - self.epsilon_final) * \
             np.exp(-1. * self.step_count / self.epsilon_decay)  
        
 
@@ -176,11 +184,19 @@ def train_dqn(env_id="ALE/SpaceInvaders-v5",
         if global_step >= learning_starts and global_step % train_freq == 0:
             if len(replay_buffer) >= batch_size:
                 batch = replay_buffer.sample(batch_size)
-                loss = agent.update(batch)
-
+                    
+                # Check if using PER (batch has indices and weights)
+                if len(batch) == 7:  # PER returns 7 elements
+                    states, actions, rewards, next_states, dones, indices, weights = batch
+                    loss, td_errors = agent.update(batch)
+                    # Update priorities in PER buffer
+                    replay_buffer.update_priorities(indices, td_errors)
+                else:  # Standard replay buffer returns 5 elements
+                    loss = agent.update(batch)
+                    
+                # Log loss periodically
                 if global_step % 1000 == 0:
                     log_scalar(writer, "train/loss", loss, global_step)
-
         
         # Update target network
         if global_step % target_update_freq == 0:

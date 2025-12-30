@@ -81,7 +81,7 @@ class NoisyQNetwork(nn.Module):
         self.fc2.reset_noise()
     
 class NoisyDQNAgent:
-    def __init__(self, input_shape, num_actions, lr=1e-4, gamma=0.99):
+    def __init__(self, input_shape, num_actions, lr=1e-4, gamma=0.99, eval_mode=False):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self.num_actions = num_actions
@@ -92,8 +92,19 @@ class NoisyDQNAgent:
         self.target_net.load_state_dict(self.q_net.state_dict())
         
         self.optimizer = optim.Adam(self.q_net.parameters(), lr=lr)
+
+        self.eval_mode = eval_mode
+
+        if eval_mode:
+            self.q_net.eval()
+            self.target_net.eval()
     
     def select_action(self, state):
+        if not self.eval_mode:
+            self.q_net.train()
+        else:
+            self.q_net.eval()
+
         with torch.no_grad():
             state_tensor = torch.tensor(np.array([state]), dtype=torch.float32).to(self.device)
             q_values = self.q_net(state_tensor)

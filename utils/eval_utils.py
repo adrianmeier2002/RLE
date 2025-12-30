@@ -10,7 +10,7 @@ import seaborn as sns
 from utils.env_utils import make_env
 
 
-def load_agent(agent_class, model_path: str, input_shape: tuple, num_actions: int):
+def load_agent(agent_class, model_path: str, input_shape: tuple, num_actions: int, eval_mode=True):
     """
     Load a trained agent from a checkpoint.
     
@@ -30,9 +30,16 @@ def load_agent(agent_class, model_path: str, input_shape: tuple, num_actions: in
     agent : Agent
         Loaded agent ready for evaluation
     """
-    agent = agent_class(input_shape, num_actions)
+
+    agent = agent_class(input_shape, num_actions, eval_mode=eval_mode)    
     agent.q_net.load_state_dict(torch.load(model_path, map_location=agent.device))
     agent.q_net.eval()  # Set to evaluation mode
+
+    # Only for security
+    if hasattr(agent, 'epsilon'):
+        agent.epsilon = 0.0
+        agent.epsilon_final = 0.0
+
     print(f"Loaded model from {model_path}")
     return agent
 
@@ -426,7 +433,7 @@ if __name__ == "__main__":
                 results = evaluate_agent(
                     agent=agent,
                     env_id=env_id,
-                    num_episodes=100,
+                    num_episodes=150,
                     seed=42,
                     agent_name=name.lower().replace(" ", "_"),
                     record_video=True,
