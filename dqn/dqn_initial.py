@@ -135,7 +135,9 @@ def train_dqn(env_id="ALE/SpaceInvaders-v5",
               video_every=None, 
               video_folder = "videos/dqn_initial/",
               writer_path = "runs/dqn_initial",
-              model_save = "dqn/models/dqn_initial.pt"
+              model_save = "dqn/models/dqn_initial.pt",
+              eval_freq = 50000,
+              eval_episodes = 10
 ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if device.type == 'cuda':
@@ -151,6 +153,7 @@ def train_dqn(env_id="ALE/SpaceInvaders-v5",
         video_freq=video_every,
         num_stack=4
     )
+    best_eval_reward = -float('inf')
     obs, info = env.reset()
     input_shape = obs.shape
     num_actions = env.action_space.n
@@ -227,6 +230,41 @@ def train_dqn(env_id="ALE/SpaceInvaders-v5",
             obs, info = env.reset()
             ep_reward = 0
 
+        if global_step % eval_freq == 0 and global_step > 0:
+            print(f"Evaluating at step {global_step}")
+            eval_rewards = []
+            agent.eval_mode = True
+
+            for _ in range(eval_episodes):
+                eval_obs, eval_info = env.reset()
+                eval_reward = 0
+                eval_done = False
+                eval_truncated = False
+
+                while not (eval_done or eval_truncated):
+                    eval_action = agent.select_action(eval_obs)
+                    eval_obs, r, eval_done, eval_truncated, eval_info = env.step(eval_action)
+                    eval_reward += r
+                
+                eval_rewards.append(eval_reward)
+
+            mean_eval = np.mean(eval_rewards)
+            log_scalar(writer, "eval/mean_reward", mean_eval, global_step)
+            print(f"Eval Mean Reward: {mean_eval:.2f}")
+
+            if mean_eval > best_eval_reward:
+                best_eval_reward = mean_eval
+                best_model_path = model_save.replace(".pt", f"_best.pt")
+                os.makedirs(os.path.dirname(best_model_path), exist_ok=True)
+                torch.save(agent.q_net.state_dict(), best_model_path)
+                print(f"New best model saved with mean reward {best_eval_reward:.2f}")
+            
+            agent.eval_mode = False
+
+    # Final update
+    agent.eval_mode = False
+    agent.update_target()
+
     # Save final model        
     env.close()
     os.makedirs(os.path.dirname(model_save), exist_ok=True)
@@ -244,5 +282,7 @@ if __name__ == "__main__":
         target_update_freq=10000,
         learning_starts=50000,
         train_freq=4,
-        video_every=100
+        video_every=100,
+        video_folder = "videos/dqn_initial/",
+        writer_path = "runs/dqn_initial"
     )
