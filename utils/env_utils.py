@@ -68,7 +68,7 @@ def make_env(
         Raw environment.
     """
 
-    render_mode = 'rgb_array' if (record_video and not eval_mode) else None
+    render_mode = 'rgb_array' if record_video else None
 
     # Create base environment
     env = gym.make(
@@ -84,11 +84,14 @@ def make_env(
     env = FrameStack(env, num_stack)
 
     # Video recording wrapper
-    if record_video and not eval_mode:
+    if record_video:
+        if eval_mode:
+            video_folder = video_folder.replace("videos/", "videos/eval_")
         env = gym.wrappers.RecordVideo(
             env,
             video_folder,
-            episode_trigger=lambda ep: ep % video_freq == 0
+            episode_trigger=lambda ep: ep % video_freq == 0,
+            disable_logger=True
         )
 
     return env

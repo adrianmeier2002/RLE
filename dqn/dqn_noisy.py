@@ -86,6 +86,7 @@ class NoisyDQNAgent:
 
         self.num_actions = num_actions
         self.gamma = gamma
+        self.eval_mode = eval_mode
 
         self.q_net = NoisyQNetwork(input_shape, num_actions).to(self.device)
         self.target_net = NoisyQNetwork(input_shape, num_actions).to(self.device)
@@ -93,17 +94,13 @@ class NoisyDQNAgent:
         
         self.optimizer = optim.Adam(self.q_net.parameters(), lr=lr)
 
-        self.eval_mode = eval_mode
-
-        if eval_mode:
-            self.q_net.eval()
-            self.target_net.eval()
+        self.target_net.eval()
     
     def select_action(self, state):
-        if not self.eval_mode:
-            self.q_net.train()
-        else:
+        if self.eval_mode:
             self.q_net.eval()
+        else:
+            self.q_net.train()
 
         with torch.no_grad():
             state_tensor = torch.tensor(np.array([state]), dtype=torch.float32).to(self.device)
@@ -126,6 +123,8 @@ class NoisyDQNAgent:
             dones = dones.float()
             dones = dones.unsqueeze(1) if dones.dim() == 1 else dones
 
+        self.q_net.train()
+
         # Q(s,a)
         q_values = self.q_net(states).gather(1, actions)
 
@@ -136,15 +135,16 @@ class NoisyDQNAgent:
         loss = F.smooth_l1_loss(q_values, target)
         self.optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), 1.0)
+        torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), 10.0)
         self.optimizer.step()
 
         self.q_net.reset_noise()
-        self.target_net.reset_noise()
+
         return loss.item()
     
     def update_target(self):
         self.target_net.load_state_dict(self.q_net.state_dict())
+        self.target_net.eval()
     
 if __name__ == "__main__":
     agent, rewards_history = train_dqn(

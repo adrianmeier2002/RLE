@@ -8,6 +8,11 @@ import time
 import json
 import traceback
 from datetime import datetime
+from multiprocessing import Process, Queue, cpu_count, set_start_method
+import torch
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
 from dqn.dqn_initial import DQNAgent, train_dqn
 from dqn.dqn_double import DoubleDQNAgent
@@ -26,32 +31,23 @@ def format_time(seconds):
     return f"{hours}h {minutes}m {secs}s"
 
 
-def train_agent_safe(config):
+def train_agent_worker(config, result_queue):
     """
-    Train a single agent with error handling.
-    
-    Parameters
-    ----------
-    config : dict
-        Training configuration
-        
-    Returns
-    -------
-    success : bool
-    duration : float
-    error : str or None
+    Worker function for parallel training.
+    Runs in separate process.
     """
     start_time = time.time()
-    
+
     try:
-        print(f"\n{'='*80}")
-        print(f"STARTING: {config['name']}")
-        print(f"{'='*80}")
-        print(f"Agent Class: {config['agent'].__name__}")
-        print(f"Buffer: {config['buffer'].__name__}")
-        print(f"Steps: {config['num_steps']:,}")
-        print(f"Model Path: {config['model_save']}")
-        print(f"{'='*80}\n")
+        # Force each worker to use specific GPU (optional)
+        if 'gpu_id' in config:
+            os.environ['CUDA_VISIBLE_DEVICES'] = str(config['gpu_id'])
+        
+        # Clear CUDA cache at start
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
+        print(f"\n[WORKER {os.getpid()}] Starting: {config['name']}")
         
         # Train the agent
         agent, rewards = train_dqn(
@@ -66,33 +62,137 @@ def train_agent_safe(config):
             video_every=config['video_every'],
             video_folder=config['video_folder'],
             writer_path=config['writer_path'],
-            model_save=config['model_save']
+            model_save=config['model_save'],
+            eval_freq=config['eval_freq'],
+            eval_episodes=config['eval_episodes']
         )
+        
+        # Clear CUDA cache after training
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         
         duration = time.time() - start_time
         
-        print(f"\n{'='*80}")
-        print(f"SUCCESS: {config['name']}")
-        print(f"Duration: {format_time(duration)}")
-        print(f"Model saved: {config['model_save']}")
-        print(f"{'='*80}\n")
+        result = {
+            'name': config['name'],
+            'success': True,
+            'duration': duration,
+            'final_reward': float(rewards[-1]) if len(rewards) > 0 else 0.0,
+            'error': None
+        }
         
-        return True, duration, None
+        result_queue.put(result)
+        print(f"[WORKER {os.getpid()}] ✓ Completed: {config['name']} in {format_time(duration)}")
         
     except Exception as e:
         duration = time.time() - start_time
-        error_msg = str(e)
+        error_trace = traceback.format_exc()
         
-        print(f"\n{'='*80}")
-        print(f"!! FAILED: {config['name']} !!")
-        print(f"Duration: {format_time(duration)}")
-        print(f"Error: {error_msg}")
-        print(f"{'='*80}")
-        print("\nFull traceback:")
-        traceback.print_exc()
-        print(f"{'='*80}\n")
+        result = {
+            'name': config['name'],
+            'success': False,
+            'duration': duration,
+            'final_reward': 0.0,
+            'error': str(e),
+            'traceback': error_trace
+        }
         
-        return False, duration, error_msg
+        result_queue.put(result)
+        print(f"[WORKER {os.getpid()}] ✗ Failed: {config['name']}")
+        print(f"Error: {str(e)}")
+        print(error_trace)
+
+def train_parallel(training_configs, max_parallel=4):
+    """
+    Train agents in parallel using multiprocessing.
+    
+    Parameters
+    ----------
+    training_configs : list
+        List of training configurations
+    max_parallel : int
+        Maximum number of agents to train simultaneously
+    """
+    results_summary = {
+        'start_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'total_agents': len(training_configs),
+        'max_parallel': max_parallel,
+        'agents': []
+    }
+    
+    total_start = time.time()
+    result_queue = Queue()
+    
+    print("\n" + "="*80)
+    print("PARALLEL TRAINING - ALL DQN VARIANTS")
+    print("="*80)
+    print(f"Total agents: {len(training_configs)}")
+    print(f"Parallel workers: {max_parallel}")
+    print(f"Start time: {results_summary['start_time']}")
+    print("="*80 + "\n")
+    
+    # Process agents in batches
+    for i in range(0, len(training_configs), max_parallel):
+        batch = training_configs[i:i + max_parallel]
+        processes = []
+        
+        print(f"\n{'#'*80}")
+        print(f"STARTING BATCH {i//max_parallel + 1}")
+        print(f"{'#'*80}")
+        
+        # Start processes
+        for config in batch:
+            p = Process(target=train_agent_worker, args=(config, result_queue))
+            p.start()
+            processes.append(p)
+            print(f"Started: {config['name']}")
+
+        print(f"\nWaiting for {len(processes)} workers to complete...\n")
+        
+        # Wait for all processes in batch to complete
+        for p in processes:
+            p.join()
+        
+        # Collect results
+        for _ in range(len(batch)):
+            result = result_queue.get()
+            results_summary['agents'].append(result)
+            
+            # Save intermediate progress
+            os.makedirs('results', exist_ok=True)
+            with open('results/training_progress.json', 'w') as f:
+                json.dump(results_summary, f, indent=4)
+    
+    # Final summary
+    total_duration = time.time() - total_start
+    results_summary['end_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    results_summary['total_duration_seconds'] = total_duration
+    results_summary['total_duration_formatted'] = format_time(total_duration)
+    
+    successful = sum(1 for a in results_summary['agents'] if a['success'])
+    failed = len(results_summary['agents']) - successful
+    
+    results_summary['successful'] = successful
+    results_summary['failed'] = failed
+    
+    with open('results/training_summary.json', 'w') as f:
+        json.dump(results_summary, f, indent=4)
+    
+    # Print summary
+    print("\n" + "="*80)
+    print("PARALLEL TRAINING COMPLETE!")
+    print("="*80)
+    print(f"Total Duration: {format_time(total_duration)}")
+    print(f"Successful: {successful}/{len(training_configs)}")
+    print(f"Failed: {failed}/{len(training_configs)}")
+    print("="*80 + "\n")
+
+    print("Individual Results:")
+    print("="*80)
+    for agent in results_summary['agents']:
+        status = "✓" if agent['success'] else "✗"
+        print(f"{status} {agent['name']:20s} | {format_time(agent['duration'])}")
+    print("="*80 + "\n")
 
 
 def main():
@@ -107,6 +207,8 @@ def main():
         'learning_starts': 50_000,
         'train_freq': 4,
         'video_every': 100,
+        'eval_freq': 100000,
+        'eval_episodes': 10
     }
     
     # Configure all agents
@@ -162,122 +264,40 @@ def main():
     os.makedirs('results', exist_ok=True)
     os.makedirs('dqn/models', exist_ok=True)
     
-    # Training summary
-    results_summary = {
-        'start_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'total_agents': len(training_configs),
-        'agents': []
-    }
-    
-    total_start = time.time()
-    successful = 0
-    failed = 0
-    
-    print("\n" + "="*80)
-    print("MASTER TRAINING SCRIPT - ALL DQN VARIANTS")
-    print("="*80)
-    print(f"Total agents to train: {len(training_configs)}")
-    print(f"Steps per agent: {common_params['num_steps']:,}")
-    print(f"Start time: {results_summary['start_time']}")
-    print("="*80)
-    
-    # Train each agent
-    for i, config in enumerate(training_configs, 1):
-        print(f"\n{'#'*80}")
-        print(f"AGENT {i}/{len(training_configs)}")
-        print(f"{'#'*80}")
+    # Determine parallel workers
+    if torch.cuda.is_available():
+        gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)  # GB
         
-        success, duration, error = train_agent_safe(config)
-        
-        # Record results
-        agent_result = {
-            'name': config['name'],
-            'success': success,
-            'duration_seconds': duration,
-            'duration_formatted': format_time(duration),
-            'model_path': config['model_save'],
-            'error': error
-        }
-        results_summary['agents'].append(agent_result)
-        
-        if success:
-            successful += 1
+        if gpu_memory >= 6:  # 6GB+ GPU
+            max_parallel = 2  # 2 Agenten gleichzeitig
+            print(f"GPU detected ({gpu_memory:.1f}GB). Training 2 agents in parallel.")
         else:
-            failed += 1
-        
-        # Save intermediate results
-        results_summary['successful'] = successful
-        results_summary['failed'] = failed
-        results_summary['last_updated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        
-        with open('results/training_progress.json', 'w') as f:
-            json.dump(results_summary, f, indent=4)
-        
-        # Print progress
-        remaining = len(training_configs) - i
-        print(f"\n{'='*80}")
-        print(f"PROGRESS: {i}/{len(training_configs)} agents completed")
-        print(f"Successful: {successful} | Failed: {failed} | Remaining: {remaining}")
-        print(f"{'='*80}\n")
-    
-    # Final summary
-    total_duration = time.time() - total_start
-    results_summary['end_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    results_summary['total_duration_seconds'] = total_duration
-    results_summary['total_duration_formatted'] = format_time(total_duration)
-    results_summary['successful'] = successful
-    results_summary['failed'] = failed
-    
-    # Save final results
-    with open('results/training_summary.json', 'w') as f:
-        json.dump(results_summary, f, indent=4)
-    
-    # Print final summary
-    print("\n" + "="*80)
-    print("TRAINING COMPLETE!")
-    print("="*80)
-    print(f"Total Duration: {format_time(total_duration)}")
-    print(f"Successful: {successful}/{len(training_configs)}")
-    print(f"Failed: {failed}/{len(training_configs)}")
-    print("\nResults saved to:")
-    print("  - results/training_summary.json")
-    print("  - results/training_progress.json")
-    print("="*80)
-    
-    # Print per-agent summary
-    print("\n" + "="*80)
-    print("AGENT TRAINING TIMES")
-    print("="*80)
-    for agent in results_summary['agents']:
-        status = "SUCCESS" if agent['success'] else "!! FAILED !!"
-        print(f"{status} {agent['name']:20s} | {agent['duration_formatted']}")
-    print("="*80 + "\n")
-    
-    if failed > 0:
-        print("\n!!  Some agents failed to train. Check results/training_summary.json for details. !!\n")
+            max_parallel = 1
+            print(f"GPU detected ({gpu_memory:.1f}GB). Training 1 agent at a time.")
     else:
-        print("\nAll agents trained successfully!\n")
-        print("Next steps:")
-        print("  1. Run evaluation: python -m utils.evaluation")
-        print("  2. Check TensorBoard: tensorboard --logdir=runs/")
-        print()
+        max_parallel = max(1, cpu_count() // 4)
+        print(f"CPU training. Using {max_parallel} parallel workers.")
+    # Run parallel training
+    train_parallel(training_configs, max_parallel=max_parallel)
 
 
 if __name__ == "__main__":
+    try:
+        set_start_method('spawn', force=True)
+
+    except RuntimeError:
+        pass
+
     try:
         main()
     except KeyboardInterrupt:
         print("\n\n" + "="*80)
         print("!! TRAINING INTERRUPTED BY USER !!")
         print("="*80)
-        print("Partial results saved in results/training_progress.json")
-        print("You can resume by commenting out completed agents in the script.")
-        print("="*80 + "\n")
     except Exception as e:
         print("\n\n" + "="*80)
         print("!! CRITICAL ERROR IN MASTER SCRIPT !!")
         print("="*80)
         print(f"Error: {e}")
-        print("\nFull traceback:")
         traceback.print_exc()
         print("="*80 + "\n")
