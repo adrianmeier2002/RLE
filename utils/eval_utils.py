@@ -33,14 +33,13 @@ def load_agent(agent_class, model_path: str, input_shape: tuple, num_actions: in
 
     agent = agent_class(input_shape, num_actions, eval_mode=eval_mode)    
     agent.q_net.load_state_dict(torch.load(model_path, map_location=agent.device, weights_only=True))
-    agent.q_net.eval()  # Set to evaluation mode
+    agent.q_net.eval()
 
     agent.eval_mode = True
 
     for param in agent.q_net.parameters():
         param.requires_grad = False
 
-    # Only for security
     if hasattr(agent, 'epsilon'):
         agent.epsilon = 0.01
         agent.epsilon_final = 0.01

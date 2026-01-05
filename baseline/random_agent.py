@@ -1,10 +1,6 @@
-import gymnasium as gym
 import numpy as np
-import time
 from datetime import datetime
-import imageio
-import ale_py
-import os
+
 
 from utils.env_utils import make_env
 from utils.logging_utils import create_writer, log_scalar

@@ -1,56 +1,55 @@
 {
-    "timestamp": "2025-12-24 11:48:12",
+    "timestamp": "2026-01-05 18:01:50",
     "environment": "ALE/SpaceInvaders-v5",
     "num_episodes": 100,
-    "seed": 42,
     "agents": [
         {
-            "name": "noisy_dqn",
-            "mean_reward": 545.0,
-            "std_reward": 0.0,
-            "median_reward": 545.0,
-            "min_reward": 545.0,
-            "max_reward": 545.0
-        },
-        {
-            "name": "per_dqn",
-            "mean_reward": 455.0,
-            "std_reward": 0.0,
-            "median_reward": 455.0,
-            "min_reward": 455.0,
-            "max_reward": 455.0
-        },
-        {
-            "name": "dqn_(baseline)",
-            "mean_reward": 420.0,
-            "std_reward": 0.0,
-            "median_reward": 420.0,
-            "min_reward": 420.0,
-            "max_reward": 420.0
+            "name": "dueling_dqn",
+            "mean_reward": 529.9666666666667,
+            "std_reward": 85.42344851125806,
+            "median_reward": 575.0,
+            "min_reward": 140.0,
+            "max_reward": 660.0
         },
         {
             "name": "double_dqn",
-            "mean_reward": 345.0,
-            "std_reward": 0.0,
-            "median_reward": 345.0,
-            "min_reward": 345.0,
-            "max_reward": 345.0
+            "mean_reward": 466.6666666666667,
+            "std_reward": 75.54395335755794,
+            "median_reward": 465.0,
+            "min_reward": 180.0,
+            "max_reward": 755.0
         },
         {
-            "name": "dueling_dqn",
-            "mean_reward": 345.0,
+            "name": "dqn_(baseline)",
+            "mean_reward": 451.8666666666667,
+            "std_reward": 61.08613226875274,
+            "median_reward": 435.0,
+            "min_reward": 285.0,
+            "max_reward": 660.0
+        },
+        {
+            "name": "noisy_dqn",
+            "mean_reward": 360.0,
             "std_reward": 0.0,
-            "median_reward": 345.0,
-            "min_reward": 345.0,
-            "max_reward": 345.0
+            "median_reward": 360.0,
+            "min_reward": 360.0,
+            "max_reward": 360.0
+        },
+        {
+            "name": "per_dqn",
+            "mean_reward": 324.9,
+            "std_reward": 41.89856799462245,
+            "median_reward": 315.0,
+            "min_reward": 215.0,
+            "max_reward": 525.0
         },
         {
             "name": "random_baseline",
-            "mean_reward": 147.35,
-            "std_reward": 104.1788246238169,
+            "mean_reward": 150.25,
+            "std_reward": 106.38227060934543,
             "median_reward": 120.0,
-            "min_reward": 5.0,
-            "max_reward": 550.0
+            "min_reward": 15.0,
+            "max_reward": 545.0
         }
     ]
 }
