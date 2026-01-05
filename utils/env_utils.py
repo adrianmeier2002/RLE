@@ -4,6 +4,7 @@ import numpy as np
 import ale_py
 from gymnasium.wrappers import GrayscaleObservation, ResizeObservation
 from collections import deque
+import random
 
 class FrameStack(gym.Wrapper):
     def __init__(self, env, k):
@@ -23,6 +24,7 @@ class FrameStack(gym.Wrapper):
 
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
+        self.frames.clear()
         for _ in range(self.k):
             self.frames.append(obs)
         return self._get_obs(), info
@@ -42,7 +44,7 @@ class FrameStack(gym.Wrapper):
         else:  # Shape is (C, H, W)
             # Concatenate along channel dimension
             return np.concatenate(frames_list, axis=0)
-
+        
 def make_env(
         env_id: str = "ALE/SpaceInvaders-v5", 
         eval_mode: bool = False,
@@ -51,7 +53,8 @@ def make_env(
         video_freq: int = 100,
         frame_size: int = 84,
         frameskip: int = 4,
-        num_stack: int = 4
+        num_stack: int = 4,
+        seed: int = None
 ):
     """
     Creates a basic Atari environment without any wrappers.
@@ -77,6 +80,12 @@ def make_env(
         repeat_action_probability=0, # No sticky actions
         render_mode=render_mode
     )
+
+    if seed is not None:
+        env.reset(seed=seed)
+
+    else:
+        env.reset(seed=random.randint(0, 100000))
 
     env = GrayscaleObservation(env, keep_dim=True)
     env = ResizeObservation(env, (frame_size, frame_size))

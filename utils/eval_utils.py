@@ -37,8 +37,8 @@ def load_agent(agent_class, model_path: str, input_shape: tuple, num_actions: in
 
     # Only for security
     if hasattr(agent, 'epsilon'):
-        agent.epsilon = 0.0
-        agent.epsilon_final = 0.0
+        agent.epsilon = 0.01
+        agent.epsilon_final = 0.01
 
     print(f"Loaded model from {model_path}")
     return agent
@@ -52,8 +52,8 @@ def evaluate_agent(
         record_video: bool = False,
         video_folder: str = "videos/eval/",
         video_freq: int = 10,
-        seed: Optional[int] = None,
-        deterministic: bool = True,
+        deterministic: bool = False,
+        eval_epsilon: float = 0.01,
         save_results: bool = True,
         results_folder: str = "results/",
         agent_name: str = "dqn"
@@ -77,8 +77,6 @@ def evaluate_agent(
         Folder to save videos
     video_freq : int
         Record every N episodes
-    seed : int, optional
-        Random seed for reproducibility
     deterministic : bool
         If True, use greedy action selection (no exploration)
     save_results : bool
@@ -118,11 +116,7 @@ def evaluate_agent(
     print(f"{'='*70}\n")
     
     for ep in range(num_episodes):
-        # Reset environment with seed
-        if seed is not None:
-            obs, info = env.reset(seed=seed + ep)
-        else:
-            obs, info = env.reset()
+        obs, info = env.reset()
         
         done = False
         truncated = False
@@ -131,10 +125,17 @@ def evaluate_agent(
         
         while not (done or truncated):
             # Select action (deterministic or with exploration)
-            if deterministic and hasattr(agent, 'select_action'):
+            if hasattr(agent, 'select_action'):
                 # Try to use eval_mode if available
                 if 'eval_mode' in agent.select_action.__code__.co_varnames:
-                    action = agent.select_action(obs, eval_mode=True)
+                    action = agent.select_action(
+                        obs, 
+                        eval_mode=True,
+                        eval_epsilon=0.0 if deterministic else eval_epsilon
+                    ) if 'eval_epsilon' in agent.select_action.__code__.co_varnames else agent.select_action(
+                        obs, 
+                        eval_mode=True
+                    )
                 else:
                     action = agent.select_action(obs)
             else:
@@ -165,7 +166,6 @@ def evaluate_agent(
         'agent_name': agent_name,
         'env_id': env_id,
         'num_episodes': num_episodes,
-        'seed': seed,
         'deterministic': deterministic,
         'mean_reward': float(np.mean(episode_rewards)),
         'std_reward': float(np.std(episode_rewards)),
@@ -382,7 +382,6 @@ if __name__ == "__main__":
     print("="*70)
     print(f"Environment: {env_id}")
     print(f"Episodes per agent: 100")
-    print(f"Seed: 42 (for reproducibility)")
     print("="*70 + "\n")
     
     # First, evaluate Random Baseline (no model loading needed)
@@ -404,11 +403,10 @@ if __name__ == "__main__":
             agent=random_agent,
             env_id=env_id,
             num_episodes=100,
-            seed=42,
             agent_name="random_baseline",
             record_video=True,
             video_freq=20,
-            deterministic=False  # Random agent is always stochastic
+            deterministic=False
         )
         
         all_results.append(results)
@@ -434,11 +432,11 @@ if __name__ == "__main__":
                     agent=agent,
                     env_id=env_id,
                     num_episodes=150,
-                    seed=42,
                     agent_name=name.lower().replace(" ", "_"),
                     record_video=True,
                     video_freq=20,
-                    deterministic=True
+                    deterministic=False,
+                    eval_epsilon=0.01
                 )
                 
                 all_results.append(results)
@@ -479,7 +477,6 @@ if __name__ == "__main__":
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'environment': env_id,
             'num_episodes': 100,
-            'seed': 42,
             'agents': [
                 {
                     'name': r['agent_name'],

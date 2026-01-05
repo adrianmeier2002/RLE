@@ -65,13 +65,15 @@ class DQNAgent:
         self.step_count = 0
         self.eval_mode = eval_mode
 
-    def select_action(self, state):
+    def select_action(self, state, eval_mode=None, eval_epsilon=0.01):
+        
+        use_eval = self.eval_mode if eval_mode is None else eval_mode
 
-        if not self.eval_mode:
+        if not use_eval:
             self.step_count += 1
 
-        if self.eval_mode:
-            eps = 0
+        if use_eval:
+            eps = eval_epsilon
         
         else:
             eps = self.epsilon_final + (self.epsilon - self.epsilon_final) * \
